@@ -1,31 +1,30 @@
-
-
+import os
 from sqlmodel import create_engine, SQLModel, Session
 
+# 1. Intentamos obtener la URL de Render (Supabase). 
+# Si no existe, usamos la de tu localhost por si quieres seguir probando en tu PC.
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-DATABASE_URL = "postgresql://postgres:1007031029M@localhost/recruiting_db"
+if not DATABASE_URL:
+    DATABASE_URL = "postgresql://postgres:1007031029M@localhost/recruiting_db"
 
-engine = create_engine(DATABASE_URL, echo=True)
-
-
+# 2. IMPORTANTE: Supabase/PostgreSQL en la nube a veces requiere 
+# configuraciones adicionales para manejar conexiones inactivas.
+engine = create_engine(
+    DATABASE_URL, 
+    echo=True,
+    pool_pre_ping=True  # Verifica que la conexión esté viva antes de usarla
+)
 
 def create_db_and_tables():
     """
-    Esta función crea todas las tablas en la base de datos.
-    Busca todas las clases que heredan de SQLModel (como JobOffer)
-    y las crea en PostgreSQL si no existen.
-    La llamaremos una sola vez, cuando la aplicación inicia (en main.py).
+    Crea las tablas en Supabase basándose en tus modelos.
     """
     SQLModel.metadata.create_all(engine)
 
-
 def get_session():
     """
-    Esta función es un "dependency injector" de FastAPI.
-    Cada vez que un endpoint (como /offers/) la necesite, FastAPI
-    la ejecutará, creará una 'session', la 'inyectará' en el endpoint,
-    y cuando el endpoint termine, cerrará la sesión automáticamente.
-    Es la forma moderna de manejar sesiones de BD.
+    Genera sesiones para los endpoints de FastAPI.
     """
     with Session(engine) as session:
         yield session

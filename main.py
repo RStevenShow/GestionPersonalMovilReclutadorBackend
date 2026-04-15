@@ -38,16 +38,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Configuracion de directorio de archivos
 UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
-# Montamos la carpeta para que las fotos sean accesibles vía URL
+# Montaje de archivos estaticos con rutas relativas
 app.mount("/static", StaticFiles(directory=UPLOAD_DIR), name="static")
 
 @app.on_event("startup")
 def on_startup():
-    print(" Sincronizando Base de Datos y Modelos de IA...")
+    print("Sincronizando Base de Datos y Modelos de IA...")
     create_db_and_tables() 
     load_models()
 
@@ -55,7 +56,7 @@ def on_startup():
 def get_current_user(token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Sesión expirada o no válida",
+        detail="Sesion expirada o no valida",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
@@ -71,13 +72,13 @@ def get_current_user(token: str = Depends(oauth2_scheme), session: Session = Dep
         raise credentials_exception
     return user
 
-# --- ENDPOINTS DE AUTENTICACIÓN ---
+# --- ENDPOINTS DE AUTENTICACION ---
 
 @app.post("/auth/register", response_model=UserRead)
 def register(user: UserCreate, session: Session = Depends(get_session)):
     existing = session.exec(select(User).where(User.username == user.username)).first()
     if existing:
-        raise HTTPException(status_code=400, detail="El correo ya está registrado")
+        raise HTTPException(status_code=400, detail="El correo ya esta registrado")
     
     db_user = User(
         username=user.username,
@@ -100,7 +101,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = D
     access_token = create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
-# --- GESTIÓN DE OFERTAS (VACANTES) ---
+# --- GESTION DE OFERTAS ---
 
 @app.post("/offers/", response_model=JobOfferRead)
 def create_offer(
@@ -108,11 +109,10 @@ def create_offer(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    # Evitamos colisión de owner_id
     offer_data = offer.dict()
     offer_data.pop("owner_id", None) 
 
-    full_context = f"Puesto: {offer.title}. Descripción: {offer.description_original}."
+    full_context = f"Puesto: {offer.title}. Descripcion: {offer.description_original}."
     desc_en = translate_text(full_context)
     vector = get_embedding(desc_en)
     
@@ -130,30 +130,23 @@ def create_offer(
 
 @app.get("/offers/", response_model=List[JobOfferRead])
 def read_offers(session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
-    # Ramón solo ve sus propias ofertas
     return session.exec(select(JobOffer).where(JobOffer.owner_id == current_user.id)).all()
 
 @app.delete("/offers/{offer_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_offer(offer_id: int, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
     offer = session.get(JobOffer, offer_id)
     if not offer or offer.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="No tienes permiso para borrar esta vacante")
+        raise HTTPException(status_code=403, detail="No autorizado")
     
     session.delete(offer)
     session.commit()
     return None
 
-# --- GESTIÓN DE PERFIL ---
+# --- GESTION DE PERFIL ---
 
 @app.get("/users/me", response_model=UserRead)
 def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
-
-@app.delete("/users/me")
-def delete_my_account(session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
-    session.delete(current_user)
-    session.commit()
-    return {"detail": "Cuenta eliminada correctamente"}
 
 @app.post("/users/me/photo")
 async def upload_profile_photo(
@@ -169,33 +162,23 @@ async def upload_profile_photo(
     with open(ruta_final, "wb") as f:
         f.write(content)
 
-    foto_url = f"http://127.0.0.1:8000/static/{nuevo_nombre}"
-    
-    # Actualizamos la foto en la base de datos para que persista
+    foto_url = f"/static/{nuevo_nombre}"
     current_user.photo_url = foto_url
     session.add(current_user)
     session.commit()
     
     return {"foto_url": foto_url}
-# Actualización de datos de Usuario (nombre, correo o contraseña)
 
 @app.put("/users/me", response_model=UserRead)
 def update_user_me(
-    user_data: UserCreate, # Usamos UserCreate para validar los campos que vienen
+    user_data: UserCreate, 
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    """ Actualiza los datos de Ramón (Nombre o Contraseña) """
-    
-    #
     if user_data.full_name:
         current_user.full_name = user_data.full_name
-    
-    
     if user_data.email:
         current_user.email = user_data.email
-
-    # Si Ramón cambió su contraseña, la hasheamos antes de guardar
     if user_data.password:
         current_user.hashed_password = get_password_hash(user_data.password)
     
@@ -203,7 +186,8 @@ def update_user_me(
     session.commit()
     session.refresh(current_user)
     return current_user
-# --- PROCESAMIENTO DE CANDIDATOS (CVs) ---
+
+# --- PROCESAMIENTO DE CANDIDATOS ---
 
 @app.post("/offers/{offer_id}/upload_cvs", response_model=List[CandidateRead])
 async def upload_cvs(
@@ -214,24 +198,22 @@ async def upload_cvs(
 ):
     offer = session.get(JobOffer, offer_id)
     if not offer or offer.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Acceso denegado a esta vacante")
+        raise HTTPException(status_code=403, detail="Acceso denegado")
     
     results = []
     for file in files:
-        file_location = f"{UPLOAD_DIR}/{file.filename}"
+        file_location = os.path.join(UPLOAD_DIR, file.filename)
         content = await file.read()
         
         with open(file_location, "wb") as f:
             f.write(content)
             
-        # --- Pipeline de Inteligencia Artificial ---
         text_es = extract_text_from_pdf(content)
         email = extract_email_from_text(text_es)
         phone = extract_phone_from_text(text_es)
         text_en = translate_text(text_es)
         vec_cv = get_embedding(text_en)
         
-        # Comparación vectorial
         score = calculate_similarity(vec_cv, offer.vector)
         rationale = generate_rationale(text_en, offer.description_en)
         
@@ -239,7 +221,7 @@ async def upload_cvs(
             name=file.filename,
             email=email,
             phone=phone,
-            file_path=f"http://127.0.0.1:8000/static/{file.filename}",
+            file_path=f"/static/{file.filename}",
             text_extracted=text_es,
             text_en=text_en,
             vector=vec_cv,
@@ -252,32 +234,28 @@ async def upload_cvs(
         results.append(new_candidate)
     
     session.commit()
-    # Los mejores candidatos primero
     results.sort(key=lambda x: x.match_score, reverse=True)
     return results
 
-# esto es para el dashboard, estadísticas generales y gráficas de proceso
+# --- DASHBOARD Y ESTADISTICAS ---
+
 @app.get("/api/dashboard-stats")
 def get_dashboard_stats(session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
-    # 1. Traer todos los datos de la base de datos
     todos_los_candidatos = session.exec(select(Candidate)).all()
     todas_las_vacantes = session.exec(select(JobOffer)).all()
     
     num_candidatos = len(todos_los_candidatos)
     num_vacantes = len(todas_las_vacantes)
     
-    # 2. Calcular promedio de Match IA
     promedio_match = 0
     if num_candidatos > 0:
         promedio_match = sum(c.match_score for c in todos_los_candidatos) / num_candidatos
 
-    # 3. Lógica para el gráfico de "Estado del proceso"
-    # Clasificamos a los candidatos por su score de IA
     stats_proceso = {
         "screening": len([c for c in todos_los_candidatos if c.match_score < 40]),
         "entrevistas": len([c for c in todos_los_candidatos if 40 <= c.match_score < 75]),
         "oferta": len([c for c in todos_los_candidatos if c.match_score >= 75]),
-        "contratados": 0  # Esto lo llenaremos cuando agreguemos el campo 'estado'
+        "contratados": 0
     }
 
     return {
@@ -286,33 +264,19 @@ def get_dashboard_stats(session: Session = Depends(get_session), current_user: U
         "entrevistas": stats_proceso["entrevistas"],
         "match": round(promedio_match, 1),
         "acciones": [
-            f"Tienes {num_vacantes} vacantes activas hoy",
-            f"IA analizó {num_candidatos} perfiles recientemente"
+            f"Tienes {num_vacantes} vacantes activas",
+            f"IA analizo {num_candidatos} perfiles"
         ],
         "proceso": stats_proceso
     }
 
-# Endpoint para obtener una vacante específica con sus candidatos vinculados (para el listado de candidatos en detalle vacantess    )
 @app.get("/offers/{offer_id}", response_model=JobOfferRead)
 def read_single_offer(
     offer_id: int, 
     session: Session = Depends(get_session), 
     current_user: User = Depends(get_current_user)
 ):
-    """ Obtiene una vacante específica con sus candidatos vinculados """
-    
-    # Buscamos la oferta en la base de datos
     offer = session.get(JobOffer, offer_id)
-    
-    # Verificamos que exista y que pertenezca al usuario actual
     if not offer or offer.owner_id != current_user.id:
-        raise HTTPException(status_code=404, detail="La vacante no existe o no tienes permiso")
-    
-    # Gracias a la relación 'relationship' en Models.py, 
-    # offer.candidates ya contiene la lista de personas que aplicaron.
-    
+        raise HTTPException(status_code=404, detail="No encontrada")
     return offer
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)

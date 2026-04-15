@@ -9,7 +9,7 @@ class UserBase(SQLModel):
     email: str = Field(unique=True)
     full_name: Optional[str] = None
     role: str = Field(default="reclutador")
-    photo_url: Optional[str] = None # Agregado para la foto de perfil de Ramón
+    photo_url: Optional[str] = None
 
 class UserCreate(UserBase):
     password: str
@@ -20,11 +20,12 @@ class UserRead(UserBase):
     photo_url: Optional[str] = None
 
 class User(UserBase, table=True):
+    __tablename__ = "user" # Nombre explicito en la DB
     id: Optional[int] = Field(default=None, primary_key=True)
     hashed_password: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
     
-    # Relación: Un reclutador tiene muchas vacantes
+    # Relacion: Un reclutador tiene muchas vacantes
     job_offers: List["JobOffer"] = Relationship(back_populates="owner")
 
 
@@ -48,13 +49,12 @@ class JobOfferBase(SQLModel):
     location: Optional[str] = "Remoto"
     priority: str = Field(default="medium")
     
-    # Clave foránea al usuario (Reclutador)
+    # Clave foranea al usuario (Reclutador)
     owner_id: Optional[int] = Field(default=None, foreign_key="user.id")
 
 class JobOfferCreate(JobOfferBase):
     pass
 
-# DTO para evitar circularidad al leer candidatos dentro de una oferta
 class CandidateReadMinimal(SQLModel): 
     id: int
     name: str
@@ -68,14 +68,13 @@ class JobOfferRead(JobOfferBase):
     candidates: List[CandidateReadMinimal] = []
 
 class JobOffer(JobOfferBase, table=True):
+    __tablename__ = "job_offer" # Corregido para evitar conflictos de FK
     id: Optional[int] = Field(default=None, primary_key=True)
     description_en: Optional[str] = None
     vector: Optional[List[float]] = Field(sa_column=Column(ARRAY(FLOAT)))
     
-    # Relación hacia el dueño
     owner: Optional[User] = Relationship(back_populates="job_offers")
     
-    # Relación hacia sus candidatos (se borran si se borra la oferta)
     candidates: List["Candidate"] = Relationship(
         back_populates="job_offer", 
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
@@ -96,6 +95,7 @@ class CandidateRead(CandidateBase):
     text_extracted: Optional[str] = None
 
 class Candidate(CandidateBase, table=True):
+    __tablename__ = "candidate"
     id: Optional[int] = Field(default=None, primary_key=True)
     text_extracted: Optional[str] = None
     text_en: Optional[str] = None
@@ -103,6 +103,6 @@ class Candidate(CandidateBase, table=True):
     match_score: float = 0.0
     rationale: Optional[str] = None
     
-    # Foreign Key explícita a la tabla joboffer
-    job_offer_id: Optional[int] = Field(default=None, foreign_key="joboffer.id")
+    # Foreign Key apuntando correctamente a job_offer.id
+    job_offer_id: Optional[int] = Field(default=None, foreign_key="job_offer.id")
     job_offer: Optional[JobOffer] = Relationship(back_populates="candidates")

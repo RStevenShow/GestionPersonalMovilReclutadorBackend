@@ -1,0 +1,86 @@
+===========================================================================
+GUÍA TÉCNICA DE INSTALACIÓN: POSTGRESQL + PGADMIN + BACKEND (MULTI-OS)
+===========================================================================
+Proyecto: Sistema de Reclutamiento IA
+Fecha: 14 de Abril, 2026
+Autor: Ramon Lopez
+---------------------------------------------------------------------------
+
+I. INSTALACIÓN DE INFRAESTRUCTURA (POSTGRESQL & PGADMIN)
+-------------------------------------------------------
+
+A) EN WINDOWS:
+   1. Descarga el instalador oficial de 'EnterpriseDB':
+      https://www.postgresql.org/download/windows/
+   2. Ejecute el .exe e instale:
+      - PostgreSQL Server
+      - pgAdmin 4
+      - Command Line Tools
+   3. DURANTE LA INSTALACIÓN:
+      - Defina una contraseña para el usuario 'postgres'.
+      - Puerto por defecto: 5432.
+   4. Al finalizar, abra 'pgAdmin 4' desde el menú Inicio.
+
+B) EN LINUX (UBUNTU/DEBIAN):
+   1. Instalación del Servidor:
+      $ sudo apt update
+      $ sudo apt install postgresql postgresql-contrib
+   2. Instalación de pgAdmin 4 (Repositorio Oficial):
+      $ curl -fsS https://www.pgadmin.org/static/packages_pgadmin_org.pub | sudo gpg --dearmor -o /usr/share/keyrings/pgadmin-browser.gpg
+      $ sudo sh -c 'echo "deb [signed-by=/usr/share/keyrings/pgadmin-browser.gpg] https://ftp.postgresql.org/pub/pgadmin/pgadmin4/apt/$(lsb_release -cs) pgadmin4 main" > /etc/apt/sources.list.d/pgadmin4.list'
+      $ sudo apt update
+      $ sudo apt install pgadmin4-desktop
+
+II. CONFIGURACIÓN DE LA BASE DE DATOS (COMÚN PARA AMBOS)
+-------------------------------------------------------
+1. Abra pgAdmin 4.
+2. Conéctese al servidor local (Password: La que definió al instalar).
+3. Clic derecho en 'Databases' -> 'Create' -> 'Database...'.
+4. Nombre de la base de datos: recruitment_db
+5. Propietario (Owner): postgres
+
+III. PREPARACIÓN DEL BACKEND (PYTHON 3.12+)
+-------------------------------------------
+En la carpeta raíz del proyecto, ejecute según su sistema:
+
+[Windows]:
+   > python -m venv .venv
+   > .venv\Scripts\activate
+   > pip install -r requirements.txt
+
+[Linux]:
+   $ python3 -m venv .venv
+   $ source .venv/bin/activate
+   $ pip install -r requirements.txt
+
+IV. ARCHIVO DE DEPENDENCIAS (requirements.txt)
+----------------------------------------------
+Copie este bloque en su archivo:
+
+fastapi==0.110.0
+uvicorn==0.27.1
+starlette==0.36.3
+sqlmodel==0.0.16
+sqlalchemy==2.0.27
+psycopg2-binary==2.9.9
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.2
+python-multipart==0.0.9
+pymupdf==1.23.26
+numpy==1.26.4
+pandas==2.2.1
+pydantic==2.6.3
+pydantic_core==2.16.3
+python-dotenv==1.0.1
+requests==2.31.0
+
+V. EJECUCIÓN
+------------
+Lanzar el servidor para sincronizar tablas y levantar la API:
+$ uvicorn main:app --reload
+
+Acceso a Documentación Interactiva: http://localhost:8000/docs
+---------------------------------------------------------------------------
+FIN DE LA DOCUMENTACIÓN
+===========================================================================

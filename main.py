@@ -214,7 +214,7 @@ async def upload_cvs(
         content = await file.read()
         # Nombre único para evitar que un archivo borre a otro
         timestamp = int(time.time())
-        safe_name = f"{current_user.id}_{timestamp}_{file.filename.replace(' ', '_')}"
+        safe_name = f"{current_user.id}/{int(time.time())}_{file.filename.replace(' ', '_')}"
         
         try:
             # 1. Intentar la subida al bucket 'cvs'

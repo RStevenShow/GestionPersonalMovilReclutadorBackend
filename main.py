@@ -347,3 +347,15 @@ def get_dashboard_stats(session: Session = Depends(get_session), current_user: U
         "acciones": [f"Tienes {num_vac} vacantes activas", f"IA analizó {num_cand} perfiles"],
         "proceso": proceso
     }
+
+
+@app.post("/api/save-subscription")
+def save_subscription(
+    subscription: dict,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    current_user.push_subscription = json.dumps(subscription)
+    session.add(current_user)
+    session.commit()
+    return {"ok": True}

@@ -13,7 +13,7 @@ from database import create_db_and_tables, get_session
 from Models import (
     JobOffer, JobOfferCreate, JobOfferRead, 
     Candidate, CandidateRead, 
-    User, UserCreate, UserRead, Token
+    User, UserCreate, UserRead, Token,Interview, InterviewCreate, InterviewRead
 )
 from auth_utils import (
     get_password_hash, verify_password, create_access_token, 

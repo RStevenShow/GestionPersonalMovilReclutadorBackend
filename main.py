@@ -324,3 +324,37 @@ def create_interview(
     session.refresh(db_interview)
     
     return db_interview
+
+@app.get("/interviews/", response_model=list)
+def read_interviews(
+    session: Session = Depends(get_session), 
+    current_user: User = Depends(get_current_user)
+):
+    # 1. Buscamos todas las entrevistas de este reclutador
+    interviews = session.exec(select(Interview).where(Interview.user_id == current_user.id)).all()
+    
+    result = []
+    for iv in interviews:
+        # 2. Por cada entrevista, buscamos quién es el candidato
+        cand = session.get(Candidate, iv.candidate_id)
+        if cand:
+            # 3. Buscamos a qué vacante aplicó ese candidato
+            offer = session.get(JobOffer, cand.job_offer_id)
+            
+            # Limpiamos el nombre por si tiene el ".pdf" al final
+            import re
+            nombre_limpio = re.sub(r'\.[^/.]+$', "", cand.name)
+            
+            # 4. Armamos el paquete de datos EXACTO que pide tu agenda.js
+            result.append({
+                "id": iv.id,
+                "candidate_id": cand.id,
+                "nombre": nombre_limpio,
+                "puesto": offer.title if offer else "Vacante eliminada",
+                "fecha": iv.fecha,
+                "hora": iv.hora,
+                "metodo": iv.metodo,
+                "match": cand.match_score
+            })
+            
+    return result

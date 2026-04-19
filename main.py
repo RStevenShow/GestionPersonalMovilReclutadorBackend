@@ -280,3 +280,47 @@ def read_single_offer(
     if not offer or offer.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="No encontrada")
     return offer
+
+
+
+@app.get("/candidates/{candidate_id}", response_model=CandidateRead)
+def read_candidate(
+    candidate_id: int, 
+    session: Session = Depends(get_session), 
+    current_user: User = Depends(get_current_user)
+):
+    # Buscar al candidato en la BD
+    candidate = session.get(Candidate, candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidato no encontrado")
+    
+    # Validar que el candidato pertenezca a una vacante creada por este reclutador
+    offer = session.get(JobOffer, candidate.job_offer_id)
+    if not offer or offer.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Acceso denegado a este perfil")
+        
+    return candidate
+
+
+@app.post("/interviews/", response_model=InterviewRead)
+def create_interview(
+    interview: InterviewCreate, 
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    # Validar que el candidato existe y le pertenece a este usuario
+    candidate = session.get(Candidate, interview.candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="El candidato no existe")
+        
+    offer = session.get(JobOffer, candidate.job_offer_id)
+    if not offer or offer.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="No tienes permiso para agendar a este candidato")
+
+    # Guardar la entrevista en la base de datos
+    db_interview = Interview(**interview.dict(), user_id=current_user.id)
+    session.add(db_interview)
+    session.commit()
+    session.refresh(db_interview)
+    
+    return db_interview

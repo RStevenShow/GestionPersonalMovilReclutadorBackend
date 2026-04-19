@@ -106,3 +106,26 @@ class Candidate(CandidateBase, table=True):
     # Foreign Key apuntando correctamente a job_offer.id
     job_offer_id: Optional[int] = Field(default=None, foreign_key="job_offer.id")
     job_offer: Optional[JobOffer] = Relationship(back_populates="candidates")
+
+
+# --- 5. MODELOS PARA ENTREVISTA Y AGENDA ---
+
+class InterviewBase(SQLModel):
+    candidate_id: int = Field(foreign_key="candidate.id")
+    fecha: str  # Guardaremos formato YYYY-MM-DD
+    hora: str   # Guardaremos formato HH:MM
+    metodo: str # Ej: "Videollamada", "Presencial"
+
+class Interview(InterviewBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id") # Relacionado al reclutador que la agendó
+
+class InterviewCreate(InterviewBase):
+    pass
+
+class InterviewRead(InterviewBase):
+    id: int
+    candidate_id: int
+    fecha: str
+    hora: str
+    metodo: str

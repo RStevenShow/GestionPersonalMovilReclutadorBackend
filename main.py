@@ -194,35 +194,79 @@ def delete_offer(offer_id: int, session: Session = Depends(get_session), current
 # =====================================================
 #   ENDPOINTS DE CANDIDATOS Y PROCESAMIENTO IA
 # =====================================================
-
 @app.post("/offers/{offer_id}/upload_cvs", response_model=List[CandidateRead])
-async def upload_cvs(offer_id: int, files: List[UploadFile] = File(...), session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+async def upload_cvs(
+    offer_id: int, 
+    files: List[UploadFile] = File(...), 
+    session: Session = Depends(get_session), 
+    current_user: User = Depends(get_current_user)
+):
     """API: Sube CVs a Supabase, extrae datos con IA, calcula el Match y guarda resultados."""
-    if not supabase: raise HTTPException(status_code=500, detail="Configuración de Supabase ausente")
+    if not supabase: 
+        raise HTTPException(status_code=500, detail="Configuración de Supabase ausente")
+    
     offer = session.get(JobOffer, offer_id)
-    if not offer or offer.owner_id != current_user.id: raise HTTPException(status_code=403, detail="Acceso denegado")
+    if not offer or offer.owner_id != current_user.id: 
+        raise HTTPException(status_code=403, detail="Acceso denegado")
     
     results = []
     for file in files:
         content = await file.read()
-        safe_name = f"{current_user.id}_{int(time.time())}_{file.filename.replace(' ', '_')}"
+        # Nombre único para evitar que un archivo borre a otro
+        timestamp = int(time.time())
+        safe_name = f"{current_user.id}_{timestamp}_{file.filename.replace(' ', '_')}"
+        
         try:
-            supabase.storage.from_("cvs").upload(path=safe_name, file=content, file_options={"content-type": "application/pdf"})
-            public_url = supabase.storage.from_("cvs").get_public_url(safe_name)
-        except Exception: raise HTTPException(status_code=500, detail="Error en Supabase Storage")
+            # 1. Intentar la subida al bucket 'cvs'
+            # Es vital que el bucket sea PUBLICO en el panel de Supabase
+            response = supabase.storage.from_("cvs").upload(
+                path=safe_name, 
+                file=content, 
+                file_options={"content-type": "application/pdf"}
+            )
             
+            # 2. Si la subida no dio error, generamos la URL pública
+            # El método .get_public_url() NO valida si el archivo existe, por eso hay que subirlo bien antes
+            public_url_obj = supabase.storage.from_("cvs").get_public_url(safe_name)
+            
+            # En algunas versiones del SDK esto es un objeto o un string. 
+            # Si lo que guardas empieza por "https", está correcto.
+            public_url = str(public_url_obj)
+
+        except Exception as e:
+            # Esto imprimirá el error real en los logs de Render (ej. "Bucket not found" o "New rows violated row-level security")
+            print(f"Error subiendo a Supabase: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Fallo al subir a la nube: {str(e)}")
+            
+        # --- PROCESAMIENTO IA (Usando el contenido en memoria) ---
         text_es = extract_text_from_pdf(content)
-        email = extract_email_from_text(text_es); phone = extract_phone_from_text(text_es)
-        text_en = translate_text(text_es); vec_cv = get_embedding(text_en)
+        email = extract_email_from_text(text_es)
+        phone = extract_phone_from_text(text_es)
+        text_en = translate_text(text_es)
+        vec_cv = get_embedding(text_en)
+        
         score = calculate_similarity(vec_cv, offer.vector)
         rationale = generate_rationale(text_en, offer.description_en)
         
-        new_cand = Candidate(name=file.filename, email=email, phone=phone, file_path=public_url,
-                             text_extracted=text_es, text_en=text_en, vector=vec_cv, 
-                             match_score=score, rationale=rationale, job_offer_id=offer.id)
-        session.add(new_cand); results.append(new_cand)
+        # --- GUARDAR EN BASE DE DATOS ---
+        # Usamos la public_url de Supabase,
+        new_cand = Candidate(
+            name=file.filename, 
+            email=email, 
+            phone=phone, 
+            file_path=public_url, # <--- URL de la nube
+            text_extracted=text_es, 
+            text_en=text_en, 
+            vector=vec_cv, 
+            match_score=score, 
+            rationale=rationale, 
+            job_offer_id=offer.id
+        )
+        session.add(new_cand)
+        results.append(new_cand)
     
-    session.commit(); results.sort(key=lambda x: x.match_score, reverse=True)
+    session.commit()
+    results.sort(key=lambda x: x.match_score, reverse=True)
     return results
 
 @app.get("/candidates/{candidate_id}", response_model=CandidateRead)

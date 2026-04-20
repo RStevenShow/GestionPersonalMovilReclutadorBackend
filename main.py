@@ -45,10 +45,10 @@ VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY")
 VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY")
 VAPID_EMAIL = os.environ.get("VAPID_EMAIL", "mailto:marknicaappmovilreclutador@gmail.com")
 
+# Esta variable es necesaria para la funcion de envio
 VAPID_CLAIMS = {
     "sub": VAPID_EMAIL
 }
-
 # Vlogs
 if not VAPID_PRIVATE_KEY or not VAPID_PUBLIC_KEY:
     print("WARNING: Las llaves VAPID no estan configuradas. Las notificaciones fallaran.")

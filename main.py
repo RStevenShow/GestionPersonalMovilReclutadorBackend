@@ -40,7 +40,18 @@ if SUPABASE_URL and SUPABASE_KEY:
 
 app = FastAPI(title="MarkNica Recruiting AI API")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+# --- CONFIGURACIÓN DE variables para notificacion ---
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY")
+VAPID_EMAIL = os.environ.get("VAPID_EMAIL", "mailto:marknicaappmovilreclutador@gmail.com")
 
+VAPID_CLAIMS = {
+    "sub": VAPID_EMAIL
+}
+
+# Vlogs
+if not VAPID_PRIVATE_KEY or not VAPID_PUBLIC_KEY:
+    print("WARNING: Las llaves VAPID no estan configuradas. Las notificaciones fallaran.")
 # --- CONFIGURACIÓN DE CORS ---
 app.add_middleware(
     CORSMiddleware,
@@ -377,38 +388,36 @@ def save_subscription(
             detail="Error interno del servidor al procesar el registro de notificaciones"
         )
 
-
 def enviar_notificacion_push(subscription_str: str, titulo: str, mensaje: str, url_destino: str = "/"):
     """
-    Gestiona el envio de paquetes push a traves del protocolo VAPID hacia los servidores del navegador.
+    Gestiona el envio de paquetes push utilizando las credenciales cargadas del entorno.
     """
+    # Si las llaves no existen, salimos para evitar el NameError
+    if not VAPID_PRIVATE_KEY:
+        print("ERROR: No se puede enviar push porque VAPID_PRIVATE_KEY no esta definida.")
+        return
+
     if not subscription_str:
-        print("WARNING: Intento de envio de notificacion sin una suscripcion valida activa.")
+        print("INFO: El usuario no tiene una suscripcion registrada.")
         return
 
     try:
-        # Deserializacion de la informacion de suscripcion almacenada
         subscription_info = json.loads(subscription_str)
-        
-        # Construccion del payload esperado por el Service Worker (sw.js)
         payload = json.dumps({
             "title": titulo,
             "body": mensaje,
             "url": url_destino
         })
 
-        # Ejecucion del envio mediante pywebpush
         webpush(
             subscription_info=subscription_info,
             data=payload,
             vapid_private_key=VAPID_PRIVATE_KEY,
             vapid_claims=VAPID_CLAIMS
         )
-        print(f"SUCCESS: Notificacion Push enviada correctamente hacia el destino: {url_destino}")
+        print(f"SUCCESS: Notificacion enviada a: {url_destino}")
         
     except WebPushException as ex:
-        # Errores comunes: 410 (Suscripcion expirada) o 403 (Llaves invalidas)
-        print(f"ERROR: Fallo en el servicio WebPush. Detalle tecnico: {str(ex)}")
-        
+        print(f"ERROR: Fallo en WebPush: {str(ex)}")
     except Exception as e:
-        print(f"ERROR: Excepcion no controlada en el modulo de notificaciones: {str(e)}")
+        print(f"ERROR: Error inesperado en el modulo push: {str(e)}")

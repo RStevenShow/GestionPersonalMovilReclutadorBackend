@@ -359,3 +359,31 @@ def save_subscription(
     session.add(current_user)
     session.commit()
     return {"ok": True}
+
+
+def enviar_notificacion_push(subscription_str: str, titulo: str, mensaje: str, url_destino: str = "/"):
+    """Envía la notificación física al dispositivo del usuario."""
+    if not subscription_str:
+        return
+
+    try:
+        # Convertimos el string guardado en la DB de nuevo a diccionario
+        subscription_info = json.loads(subscription_str)
+        
+        # Cuerpo del mensaje que espera tu sw.js
+        payload = json.dumps({
+            "title": titulo,
+            "body": mensaje,
+            "url": url_destino
+        })
+
+        webpush(
+            subscription_info=subscription_info,
+            data=payload,
+            vapid_private_key=VAPID_PRIVATE_KEY,
+            vapid_claims=VAPID_CLAIMS
+        )
+        print("✅ Notificación enviada con éxito")
+    except WebPushException as ex:
+        print(f"❌ Error en Web Push: {ex}")
+        # Si el error es 410 (Gone), el usuario canceló el permiso o expiró

@@ -44,7 +44,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -349,41 +349,65 @@ def get_dashboard_stats(session: Session = Depends(get_session), current_user: U
     }
 
 
+import json 
 @app.post("/api/save-subscription")
 def save_subscription(
     subscription: dict,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    current_user.push_subscription = json.dumps(subscription)
-    session.add(current_user)
-    session.commit()
-    return {"ok": True}
+    """
+    Recibe la suscripcion push del frontend y la almacena en el perfil del usuario.
+    """
+    try:
+        # Serializacion del objeto de suscripcion para persistencia en base de datos
+        current_user.push_subscription = json.dumps(subscription)
+        
+        session.add(current_user)
+        session.commit()
+        
+        print(f"INFO: Suscripcion actualizada exitosamente para el usuario ID: {current_user.id}")
+        return {"ok": True}
+        
+    except Exception as e:
+        print(f"ERROR: Fallo al guardar la suscripcion en la base de datos: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Error interno del servidor al procesar el registro de notificaciones"
+        )
 
 
 def enviar_notificacion_push(subscription_str: str, titulo: str, mensaje: str, url_destino: str = "/"):
-    """Envía la notificación física al dispositivo del usuario."""
+    """
+    Gestiona el envio de paquetes push a traves del protocolo VAPID hacia los servidores del navegador.
+    """
     if not subscription_str:
+        print("WARNING: Intento de envio de notificacion sin una suscripcion valida activa.")
         return
 
     try:
-        # Convertimos el string guardado en la DB de nuevo a diccionario
+        # Deserializacion de la informacion de suscripcion almacenada
         subscription_info = json.loads(subscription_str)
         
-        # Cuerpo del mensaje que espera tu sw.js
+        # Construccion del payload esperado por el Service Worker (sw.js)
         payload = json.dumps({
             "title": titulo,
             "body": mensaje,
             "url": url_destino
         })
 
+        # Ejecucion del envio mediante pywebpush
         webpush(
             subscription_info=subscription_info,
             data=payload,
             vapid_private_key=VAPID_PRIVATE_KEY,
             vapid_claims=VAPID_CLAIMS
         )
-        print("✅ Notificación enviada con éxito")
+        print(f"SUCCESS: Notificacion Push enviada correctamente hacia el destino: {url_destino}")
+        
     except WebPushException as ex:
-        print(f"❌ Error en Web Push: {ex}")
-        # Si el error es 410 (Gone), el usuario canceló el permiso o expiró
+        # Errores comunes: 410 (Suscripcion expirada) o 403 (Llaves invalidas)
+        print(f"ERROR: Fallo en el servicio WebPush. Detalle tecnico: {str(ex)}")
+        
+    except Exception as e:
+        print(f"ERROR: Excepcion no controlada en el modulo de notificaciones: {str(e)}")

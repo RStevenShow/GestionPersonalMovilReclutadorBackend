@@ -8,7 +8,8 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlmodel import Session, select
 from jose import JWTError, jwt
 from supabase import create_client, Client
-
+import json
+from pywebpush import webpush, WebPushException
 # --- IMPORTS DE MODELOS Y UTILIDADES ---
 from database import create_db_and_tables, get_session
 from Models import (

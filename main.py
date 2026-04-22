@@ -366,7 +366,9 @@ def read_interviews(session: Session = Depends(get_session), current_user: User 
             result.append({
                 "id": iv.id, "candidate_id": cand.id, "nombre": cand.name.replace(".pdf", ""),
                 "puesto": offer.title if offer else "Vacante eliminada",
-                "fecha": iv.fecha, "hora": iv.hora, "metodo": iv.metodo, "match": cand.match_score
+                "fecha": iv.fecha, "hora": iv.hora, "metodo": iv.metodo, "match": cand.match_score,
+                 "completada": iv.completada,
+                 "calificacion": iv.calificacion
             })
     return result
 

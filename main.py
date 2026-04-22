@@ -5,7 +5,7 @@ from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from sqlmodel import Session, select
+from sqlmodel import Session, select,create_engine
 from jose import JWTError, jwt
 from supabase import create_client, Client
 import json
@@ -41,11 +41,19 @@ from sqlmodel import select, Session
 # Configuración de zona horaria para Nicaragua
 nicaragua_tz = timezone('America/Managua')
 
+# --- CONFIGURACIÓN DE BASE DE DATOS ---
+# Importante: DATABASE_URL es diferente a SUPABASE_URL
+DATABASE_URL = os.environ.get("DATABASE_URL") 
+
+# Crear el engine de forma global para que el Scheduler lo vea
+engine = create_engine(DATABASE_URL)
+
 
 # --- CONFIGURACIÓN DE SUPABASE STORAGE ---
 # Estas variables deben estar configuradas en el Dashboard de Render
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
 
 supabase: Client = None
 if SUPABASE_URL and SUPABASE_KEY:

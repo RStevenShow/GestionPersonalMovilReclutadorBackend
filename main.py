@@ -5,14 +5,13 @@ from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from sqlmodel import Session, select,create_engine
+from sqlmodel import Session, select, create_engine
+from sqlalchemy import func
 from jose import JWTError, jwt
 from supabase import create_client, Client
 import json
 from pywebpush import webpush, WebPushException
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session
-
 
 # --- IMPORTS DE MODELOS Y UTILIDADES ---
 from database import create_db_and_tables, get_session
@@ -26,6 +25,19 @@ from auth_utils import (
     get_password_hash, verify_password, create_access_token, 
     SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 )
+
+from ai_service import (
+    load_models, translate_text, get_embedding,
+    extract_text_from_pdf, calculate_similarity,
+    generate_rationale, extract_email_from_text,
+    extract_phone_from_text
+)
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime, timedelta
+from pytz import timezone
+    
+
 from ai_service import (
     load_models, translate_text, get_embedding,
     extract_text_from_pdf, calculate_similarity,
@@ -364,20 +376,45 @@ def read_interviews(session: Session = Depends(get_session), current_user: User 
 
 @app.get("/api/dashboard-stats")
 def get_dashboard_stats(session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
-    """API: Genera las estadísticas globales de candidatos, matches y procesos para el Inicio."""
+    # 1. Consultas base
     candidatos = session.exec(select(Candidate).join(JobOffer).where(JobOffer.owner_id == current_user.id)).all()
     vacantes = session.exec(select(JobOffer).where(JobOffer.owner_id == current_user.id)).all()
-    num_cand = len(candidatos); num_vac = len(vacantes)
-    promedio = sum(c.match_score for c in candidatos) / num_cand if num_cand > 0 else 0
     
+    num_cand = len(candidatos)
+    num_vac = len(vacantes)
+    
+    # 2. Ahorro de Tiempo (Lógica de 10 min por CV)
+    horas_ahorradas = round(num_cand * 0.16, 1)
+    
+    # 3. Precisión IA (Promedio de Match Score de los que llegaron a entrevista)
+    # Usamos una forma más compatible con SQLModel
+    stmt_precision = (
+        select(func.avg(Candidate.match_score))
+        .join(Interview, Interview.candidate_id == Candidate.id)
+        .where(Interview.user_id == current_user.id)
+    )
+    promedio_match = session.exec(stmt_precision).first() or 0
+
+    # 4. Cálculo de promedio general para el Dashboard
+    promedio_general = sum(c.match_score for c in candidatos) / num_cand if num_cand > 0 else 0
+
     proceso = {
         "screening": len([c for c in candidatos if c.match_score < 40]),
         "entrevistas": len(session.exec(select(Interview).where(Interview.user_id == current_user.id)).all()),
-        "oferta": len([c for c in candidatos if c.match_score >= 75]), "contratados": 0
+        "oferta": len([c for c in candidatos if c.match_score >= 75]),
+        "contratados": 0
     }
+
     return {
-        "appNombre": "MarkNica AI", "candidatos": num_cand, "match": round(promedio, 1),
-        "acciones": [f"Tienes {num_vac} vacantes activas", f"IA analizó {num_cand} perfiles"],
+        "appNombre": "MarkNica AI",
+        "candidatos": num_cand,
+        "match": round(promedio_general, 1),
+        "tiempoAhorrado": f"{horas_ahorradas}h",
+        "precisionIA": f"{round(promedio_match, 1)}%",
+        "acciones": [
+            f"Tienes {num_vac} vacantes activas", 
+            f"IA analizó {num_cand} perfiles"
+        ],
         "proceso": proceso
     }
 

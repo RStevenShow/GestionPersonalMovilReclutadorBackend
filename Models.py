@@ -115,20 +115,19 @@ class Candidate(CandidateBase, table=True):
 
 class InterviewBase(SQLModel):
     candidate_id: int = Field(foreign_key="candidate.id")
-    fecha: str  # Guardaremos formato YYYY-MM-DD
-    hora: str   # Guardaremos formato HH:MM
-    metodo: str # Ej: "Videollamada", "Presencial"
+    fecha: date  # Cambio de str a date
+    hora: time   # Cambio de str a time
+    metodo: str  # Ej: "Videollamada", "Presencial"
+    completada: bool = Field(default=False) # Para seguimiento de "entrevistas que hacen falta"
+    calificacion: Optional[float] = Field(default=None) # Resultado de la entrevista
 
 class Interview(InterviewBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id") # Relacionado al reclutador que la agendó
+    user_id: int = Field(foreign_key="user.id")
 
 class InterviewCreate(InterviewBase):
     pass
 
 class InterviewRead(InterviewBase):
     id: int
-    candidate_id: int
-    fecha: str
-    hora: str
-    metodo: str
+

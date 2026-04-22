@@ -10,6 +10,10 @@ from jose import JWTError, jwt
 from supabase import create_client, Client
 import json
 from pywebpush import webpush, WebPushException
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlmodel import Session
+
+
 # --- IMPORTS DE MODELOS Y UTILIDADES ---
 from database import create_db_and_tables, get_session
 from Models import (
@@ -28,6 +32,15 @@ from ai_service import (
     generate_rationale, extract_email_from_text,
     extract_phone_from_text
 )
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime, timedelta
+from pytz import timezone
+from sqlmodel import select, Session
+
+# Configuración de zona horaria para Nicaragua
+nicaragua_tz = timezone('America/Managua')
+
 
 # --- CONFIGURACIÓN DE SUPABASE STORAGE ---
 # Estas variables deben estar configuradas en el Dashboard de Render
@@ -421,3 +434,125 @@ def enviar_notificacion_push(subscription_str: str, titulo: str, mensaje: str, u
         print(f"ERROR: Fallo en WebPush: {str(ex)}")
     except Exception as e:
         print(f"ERROR: Error inesperado en el modulo push: {str(e)}")
+
+#Logica para las notifiacions de Entrevista de la agenda
+
+def gestionar_notificaciones_agenda():
+    """
+    Identifica entrevistas proximas y pendientes para notificar al reclutador.
+    """
+    with Session(engine) as session:
+        ahora = datetime.now(nicaragua_tz)
+        hora_limite = (ahora + timedelta(minutes=30)).time()
+        fecha_actual = ahora.date()
+
+        # 1. RECORDATORIOS DE ENTREVISTAS PRÓXIMAS (en los siguientes 30 min)
+        statement_proximas = select(Interview).where(
+            Interview.fecha == fecha_actual,
+            Interview.hora >= ahora.time(),
+            Interview.hora <= hora_limite,
+            Interview.completada == False
+        )
+        proximas = session.exec(statement_proximas).all()
+
+        for entrevista in proximas:
+            user = session.get(User, entrevista.user_id)
+            if user and user.push_subscription:
+                enviar_notificacion_push(
+                    subscription_str=user.push_subscription,
+                    titulo="Recordatorio de Entrevista",
+                    mensaje=f"Entrevista programada para las {entrevista.hora.strftime('%H:%M')}",
+                    url_destino="/agenda.html"
+                )
+
+        # 2. RECORDATORIOS DE ENTREVISTAS PENDIENTES (pasadas y no completadas)
+        statement_pendientes = select(Interview).where(
+            Interview.fecha <= fecha_actual,
+            Interview.hora < ahora.time(),
+            Interview.completada == False
+        )
+        pendientes = session.exec(statement_pendientes).all()
+
+        for pendiente in pendientes:
+            user = session.get(User, pendiente.user_id)
+            if user and user.push_subscription:
+                enviar_notificacion_push(
+                    subscription_str=user.push_subscription,
+                    titulo="Entrevista Pendiente",
+                    mensaje="Tiene una entrevista pasada que aun no ha sido calificada.",
+                    url_destino="/agenda.html"
+                )
+
+# Inicializacion del planificador con la zona horaria correcta
+scheduler = BackgroundScheduler(timezone=nicaragua_tz)
+# Se ejecuta cada 15 minutos para balancear precision y consumo de recursos
+scheduler.add_job(gestionar_notificaciones_agenda, 'interval', minutes=15)
+
+@app.on_event("startup")
+def iniciar_planificador():
+    """
+    Inicia el servicio de monitoreo de agenda al arrancar el backend.
+    """
+    if not scheduler.running:
+        scheduler.start()
+        print("SISTEMA: Planificador de notificaciones de agenda iniciado.")
+
+@app.on_event("shutdown")
+def detener_planificador():
+    """
+    Cierra el servicio de monitoreo de forma segura.
+    """
+    if scheduler.running:
+        scheduler.shutdown()
+        print("SISTEMA: Planificador de notificaciones detenido.")
+
+
+@app.patch("/api/interviews/{interview_id}/complete", status_code=status.HTTP_200_OK)
+def finalizar_entrevista(
+    interview_id: int,
+    calificacion: float,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Marca una entrevista como completada y registra la calificacion final.
+    Esto detiene los recordatorios automaticos del planificador.
+    """
+    # 1. Buscar la entrevista por ID
+    entrevista = session.get(Interview, interview_id)
+    
+    if not entrevista:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Entrevista no encontrada"
+        )
+    
+    # 2. Verificar que la entrevista pertenezca al reclutador actual
+    if entrevista.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="No tiene permisos para modificar esta entrevista"
+        )
+    
+    # 3. Actualizar campos
+    entrevista.completada = True
+    entrevista.calificacion = calificacion
+    
+    try:
+        session.add(entrevista)
+        session.commit()
+        session.refresh(entrevista)
+        
+        print(f"LOG: Entrevista {interview_id} marcada como completada por usuario {current_user.id}")
+        return {
+            "mensaje": "Entrevista finalizada exitosamente",
+            "id": entrevista.id,
+            "completada": entrevista.completada
+        }
+    except Exception as e:
+        session.rollback()
+        print(f"ERROR: No se pudo actualizar la entrevista: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al actualizar el estado de la entrevista en la base de datos"
+        )

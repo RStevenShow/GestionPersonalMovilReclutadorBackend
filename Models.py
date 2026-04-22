@@ -2,7 +2,7 @@ from typing import Optional, List
 from sqlmodel import SQLModel, Field, Column, Relationship
 from sqlalchemy.dialects.postgresql import ARRAY, FLOAT
 from datetime import datetime
-
+from datetime import date, time
 #--- 1. MODELOS DE USUARIO ---
 
 class UserBase(SQLModel):

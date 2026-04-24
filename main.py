@@ -249,12 +249,33 @@ async def upload_cvs(
     """Sube CVs, procesa con IA, calcula match y guarda resultados."""
 
     # --- VALIDACIONES INICIALES ---
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Configuración de Supabase ausente")
-
     offer = session.get(JobOffer, offer_id)
     if not offer or offer.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Acceso denegado")
+
+    # --- VALIDAR SI LA VACANTE YA ESTA CERRADA ---
+    if offer.estado == "cerrada":
+        raise HTTPException(
+            status_code=400,
+            detail="La vacante ya está llena y no acepta más candidatos"
+        )
+
+    # --- VALIDAR SI LA VACANTE YA ESTA LLENA ---
+    candidatos_actuales = session.exec(
+        select(Candidate).where(Candidate.job_offer_id == offer.id)
+    ).all()
+
+    espacios_disponibles = offer.max_candidatos - len(candidatos_actuales)
+
+    if espacios_disponibles <= 0:
+        offer.estado = "cerrada"
+        session.add(offer)
+        session.commit()
+
+        raise HTTPException(
+            status_code=400,
+            detail="La vacante ya alcanzó el límite de candidatos"
+        )
 
     results = []
 
@@ -314,6 +335,16 @@ async def upload_cvs(
 
     # --- ORDENAR RESULTADOS ---
     results.sort(key=lambda x: x.match_score, reverse=True)
+
+    # --- ACTUALIZAR ESTADO DE LA VACANTE ---
+    total_candidatos = session.exec(
+        select(Candidate).where(Candidate.job_offer_id == offer.id)
+    ).all()
+
+    if len(total_candidatos) >= offer.max_candidatos:
+        offer.estado = "cerrada"
+        session.add(offer)
+        session.commit()
 
     # --- NOTIFICACIÓN PUSH ---
     if current_user.push_subscription:
@@ -466,7 +497,7 @@ def get_vacantes_ranking(session: Session = Depends(get_session), current_user: 
 
 #=====================================================
 #  ENDPOINTS DE NOTIFICACIONES PUSH
-# =====================================================
+ #=====================================================
 
 import json 
 @app.post("/api/save-subscription")

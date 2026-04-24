@@ -141,11 +141,12 @@ class InterviewBase(SQLModel):
     fecha: date
     hora: time
     metodo: str
-
+    
     completada: bool = Field(default=False)
     calificacion: Optional[float] = None
     contratado: bool = Field(default=False)
-
+    notificado_proxima: bool = Field(default=False)
+    notificado_pendiente: bool = Field(default=False)
 
 class Interview(InterviewBase, table=True):
     __tablename__ = "interview"

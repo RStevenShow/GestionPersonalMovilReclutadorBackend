@@ -512,47 +512,41 @@ def get_vacantes_ranking(session: Session = Depends(get_session), current_user: 
  #=====================================================
 
 import json 
+#esta guarda la suscripcion del usuario para poder enviarle notificaciones push en el futuro
 @app.post("/api/save-subscription")
 def save_subscription(
     subscription: dict,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Recibe la suscripcion push del frontend y la almacena en el perfil del usuario.
-    """
     try:
-        # Serializacion del objeto de suscripcion para persistencia en base de datos
         current_user.push_subscription = json.dumps(subscription)
-        
         session.add(current_user)
         session.commit()
-        
-        print(f"INFO: Suscripcion actualizada exitosamente para el usuario ID: {current_user.id}")
-        return {"ok": True}
-        
-    except Exception as e:
-        print(f"ERROR: Fallo al guardar la suscripcion en la base de datos: {str(e)}")
-        raise HTTPException(
-            status_code=500, 
-            detail="Error interno del servidor al procesar el registro de notificaciones"
-        )
 
-def enviar_notificacion_push(subscription_str: str, titulo: str, mensaje: str, url_destino: str = "/"):
-    """
-    Gestiona el envio de paquetes push utilizando las credenciales cargadas del entorno.
-    """
-    # Si las llaves no existen, salimos para evitar el NameError
+        print(f"INFO: Suscripción guardada para user {current_user.id}")
+        return {"ok": True}
+
+    except Exception as e:
+        print(f"ERROR save_subscription: {e}")
+        raise HTTPException(status_code=500, detail="Error guardando suscripción")
+    
+
+#esta funcion se encarga de enviar la notificacion push al usuario, se llama desde el planificador cada vez que hay una entrevista proxima o pendiente
+
+def enviar_notificacion_push(subscription_str: str, titulo: str, mensaje: str, url_destino: str = "/agenda.html"):
+    """Envía una notificación push al usuario utilizando la información de su suscripción."""
     if not VAPID_PRIVATE_KEY:
-        print("ERROR: No se puede enviar push porque VAPID_PRIVATE_KEY no esta definida.")
+        print("ERROR: VAPID no configurado")
         return
 
     if not subscription_str:
-        print("INFO: El usuario no tiene una suscripcion registrada.")
+        print("INFO: Usuario sin suscripción")
         return
 
     try:
         subscription_info = json.loads(subscription_str)
+
         payload = json.dumps({
             "title": titulo,
             "body": mensaje,
@@ -565,65 +559,87 @@ def enviar_notificacion_push(subscription_str: str, titulo: str, mensaje: str, u
             vapid_private_key=VAPID_PRIVATE_KEY,
             vapid_claims=VAPID_CLAIMS
         )
-        print(f"SUCCESS: Notificacion enviada a: {url_destino}")
-        
-    except WebPushException as ex:
-        print(f"ERROR: Fallo en WebPush: {str(ex)}")
+
+        print(f"SUCCESS PUSH: {titulo}")
+
     except Exception as e:
-        print(f"ERROR: Error inesperado en el modulo push: {str(e)}")
+        print(f"ERROR PUSH: {e}")
+
 
 #Logica para las notifiacions de Entrevista de la agenda
 
 def gestionar_notificaciones_agenda():
-    """
-    Identifica entrevistas proximas y pendientes para notificar al reclutador.
-    """
     with Session(engine) as session:
         ahora = datetime.now(nicaragua_tz)
-        hora_limite = (ahora + timedelta(minutes=30)).time()
-        fecha_actual = ahora.date()
+        limite = ahora + timedelta(minutes=30)
 
-        # 1. RECORDATORIOS DE ENTREVISTAS PRÓXIMAS (en los siguientes 30 min)
-        statement_proximas = select(Interview).where(
-            Interview.fecha == fecha_actual,
-            Interview.hora >= ahora.time(),
-            Interview.hora <= hora_limite,
-            Interview.completada == False
-        )
-        proximas = session.exec(statement_proximas).all()
+        entrevistas = session.exec(
+            select(Interview).where(Interview.completada == False)
+        ).all()
 
-        for entrevista in proximas:
-            user = session.get(User, entrevista.user_id)
-            if user and user.push_subscription:
-                enviar_notificacion_push(
-                    subscription_str=user.push_subscription,
-                    titulo="Recordatorio de Entrevista",
-                    mensaje=f"Entrevista programada para las {entrevista.hora.strftime('%H:%M')}",
-                    url_destino="/agenda.html"
-                )
+        print(f"DEBUG: Total entrevistas: {len(entrevistas)}")
 
-        # 2. RECORDATORIOS DE ENTREVISTAS PENDIENTES (pasadas y no completadas)
-        statement_pendientes = select(Interview).where(
-            Interview.fecha <= fecha_actual,
-            Interview.hora < ahora.time(),
-            Interview.completada == False
-        )
-        pendientes = session.exec(statement_pendientes).all()
+        for entrevista in entrevistas:
+            try:
+                # Construir datetime completo
+                fecha_hora = datetime.combine(entrevista.fecha, entrevista.hora)
+                fecha_hora = nicaragua_tz.localize(fecha_hora)
 
-        for pendiente in pendientes:
-            user = session.get(User, pendiente.user_id)
-            if user and user.push_subscription:
-                enviar_notificacion_push(
-                    subscription_str=user.push_subscription,
-                    titulo="Entrevista Pendiente",
-                    mensaje="Tiene una entrevista pasada que aun no ha sido calificada.",
-                    url_destino="/agenda.html"
-                )
+                user = session.get(User, entrevista.user_id)
+
+                if not user or not user.push_subscription:
+                    continue
+
+                # ===============================
+                #  1. RECORDATORIO PRÓXIMO
+                # ===============================
+                if ahora <= fecha_hora <= limite and not entrevista.notificado_proxima:
+
+                    print(f"DEBUG: Notificando próxima -> {entrevista.id}")
+
+                    enviar_notificacion_push(
+                        subscription_str=user.push_subscription,
+                        titulo="Entrevista en breve",
+                        mensaje=f"Tienes una entrevista a las {entrevista.hora.strftime('%H:%M')}",
+                        url_destino="/agenda.html"
+                    )
+
+                    entrevista.notificado_proxima = True
+                    session.add(entrevista)
+
+                # ===============================
+                # 2. ENTREVISTA PENDIENTE
+                # ===============================
+                elif fecha_hora < ahora and not entrevista.notificado_pendiente:
+
+                    print(f"DEBUG: Notificando pendiente -> {entrevista.id}")
+
+                    enviar_notificacion_push(
+                        subscription_str=user.push_subscription,
+                        titulo="Entrevista pendiente",
+                        mensaje="Tienes una entrevista sin completar.",
+                        url_destino="/agenda.html"
+                    )
+
+                    entrevista.notificado_pendiente = True
+                    session.add(entrevista)
+
+            except Exception as e:
+                print(f"ERROR procesando entrevista {entrevista.id}: {e}")
+
+        session.commit()
 
 # Inicializacion del planificador con la zona horaria correcta
 scheduler = BackgroundScheduler(timezone=nicaragua_tz)
-# Se ejecuta cada 15 minutos para balancear precision y consumo de recursos
-scheduler.add_job(gestionar_notificaciones_agenda, 'interval', minutes=15)
+
+scheduler.add_job(
+    gestionar_notificaciones_agenda,
+    'interval',
+    minutes=1   
+)
+
+
+
 
 @app.on_event("startup")
 def iniciar_planificador():
@@ -632,7 +648,7 @@ def iniciar_planificador():
     """
     if not scheduler.running:
         scheduler.start()
-        print("SISTEMA: Planificador de notificaciones de agenda iniciado.")
+        print("SISTEMA: Scheduler iniciado")
 
 @app.on_event("shutdown")
 def detener_planificador():
@@ -641,7 +657,7 @@ def detener_planificador():
     """
     if scheduler.running:
         scheduler.shutdown()
-        print("SISTEMA: Planificador de notificaciones detenido.")
+        print("SISTEMA: Scheduler detenido")
 
 
 @app.patch("/api/interviews/{interview_id}/complete", status_code=status.HTTP_200_OK)

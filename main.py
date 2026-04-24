@@ -409,47 +409,59 @@ def read_interviews(session: Session = Depends(get_session), current_user: User 
 
 @app.get("/api/dashboard-stats")
 def get_dashboard_stats(session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
-    # 1. Consultas base
-    candidatos = session.exec(select(Candidate).join(JobOffer).where(JobOffer.owner_id == current_user.id)).all()
-    vacantes = session.exec(select(JobOffer).where(JobOffer.owner_id == current_user.id)).all()
     
+    # --- BASE ---
+    candidatos = session.exec(
+        select(Candidate).join(JobOffer).where(JobOffer.owner_id == current_user.id)
+    ).all()
+
+    entrevistas = session.exec(
+        select(Interview).where(Interview.user_id == current_user.id)
+    ).all()
+
     num_cand = len(candidatos)
-    num_vac = len(vacantes)
+    num_vac = len(session.exec(select(JobOffer).where(JobOffer.owner_id == current_user.id)).all())
+
+    # --- PROCESO REAL ---
     
-    # 2. Ahorro de Tiempo (Lógica de 10 min por CV)
-    horas_ahorradas = round(num_cand * 0.16, 1)
-    
-    # 3. Precisión IA (Promedio de Match Score de los que llegaron a entrevista)
-    # Usamos una forma más compatible con SQLModel
-    stmt_precision = (
-        select(func.avg(Candidate.match_score))
-        .join(Interview, Interview.candidate_id == Candidate.id)
-        .where(Interview.user_id == current_user.id)
+    # 1. Screening = candidatos SIN entrevista
+    candidatos_con_entrevista = {e.candidate_id for e in entrevistas}
+    screening = len([c for c in candidatos if c.id not in candidatos_con_entrevista])
+
+    # 2. Entrevistas creadas
+    total_entrevistas = len(entrevistas)
+
+    # 3. Evaluados = entrevistas completadas
+    evaluados = len([e for e in entrevistas if e.completada])
+
+    # 4. Top candidatos (ej: calificación >= 80)
+    top = len([e for e in entrevistas if e.completada and (e.calificacion or 0) >= 80])
+
+    # --- MATCH PROMEDIO ---
+    promedio_general = (
+        sum(c.match_score for c in candidatos) / num_cand
+        if num_cand > 0 else 0
     )
-    promedio_match = session.exec(stmt_precision).first() or 0
-
-    # 4. Cálculo de promedio general para el Dashboard
-    promedio_general = sum(c.match_score for c in candidatos) / num_cand if num_cand > 0 else 0
-
-    proceso = {
-        "screening": len([c for c in candidatos if c.match_score < 40]),
-        "entrevistas": len(session.exec(select(Interview).where(Interview.user_id == current_user.id)).all()),
-        "oferta": len([c for c in candidatos if c.match_score >= 75]),
-        "contratados": 0
-    }
 
     return {
         "appNombre": "MarkNica AI",
         "candidatos": num_cand,
         "match": round(promedio_general, 1),
-        "tiempoAhorrado": f"{horas_ahorradas}h",
-        "precisionIA": f"{round(promedio_match, 1)}%",
+
         "acciones": [
-            f"Tienes {num_vac} vacantes activas", 
-            f"IA analizó {num_cand} perfiles"
+            f"Tienes {num_vac} vacantes activas",
+            f"{total_entrevistas} entrevistas programadas"
         ],
-        "proceso": proceso
+
+        "proceso": {
+            "screening": screening,
+            "entrevistas": total_entrevistas,
+            "oferta": evaluados,   
+            "contratados": top    
+        }
     }
+
+
 @app.get("/api/dashboard-vacantes-ranking")
 def get_vacantes_ranking(session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
     """API: Entrega el Top 3 de candidatos por vacante, permitiendo alternar entre Match IA y Notas."""
@@ -681,3 +693,5 @@ def finalizar_entrevista(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error al actualizar el estado de la entrevista en la base de datos"
         )
+
+

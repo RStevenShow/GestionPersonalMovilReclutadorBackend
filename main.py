@@ -419,7 +419,54 @@ def get_dashboard_stats(session: Session = Depends(get_session), current_user: U
         ],
         "proceso": proceso
     }
+@app.get("/api/dashboard-vacantes-ranking")
+def get_vacantes_ranking(session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
+    """API: Entrega el Top 3 de candidatos por vacante, permitiendo alternar entre Match IA y Notas."""
+    
+    # 1. Obtener las ofertas de trabajo del reclutador actual
+    ofertas = session.exec(select(JobOffer).where(JobOffer.owner_id == current_user.id)).all()
+    
+    resultado = []
+    
+    for oferta in ofertas:
+        # 2. Obtener candidatos asociados a esta oferta
+        # (Asegúrate de que Candidate tenga la relación con JobOffer)
+        candidatos_data = []
+        
+        for cand in oferta.candidates:
+            # 3. Buscar si tiene una entrevista completada para obtener la calificación real
+            # Esto une tu criterio de "Calificación de Entrevista" con el "Match IA"
+            entrevista = session.exec(
+                select(Interview).where(
+                    Interview.candidate_id == cand.id,
+                    Interview.completada == True
+                )
+            ).first()
+            
+            candidatos_data.append({
+                "id": cand.id,
+                "nombre": cand.name,
+                "email": cand.email,
+                "match_score": round(cand.match_score, 1),
+                "calificacion_entrevista": entrevista.calificacion if entrevista else 0
+            })
 
+        # Agregamos la vacante solo si tiene candidatos
+        if candidatos_data:
+            resultado.append({
+                "id": str(oferta.id),
+                "titulo": oferta.title,
+                "candidatos": candidatos_data
+            })
+    
+    # Devolvemos la estructura exacta que el Frontend espera con 'vacantes'
+    return {"vacantes": resultado}
+
+
+
+#=====================================================
+#  ENDPOINTS DE NOTIFICACIONES PUSH
+# =====================================================
 
 import json 
 @app.post("/api/save-subscription")

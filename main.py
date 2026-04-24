@@ -358,7 +358,7 @@ async def upload_cvs(
             subscription_str=current_user.push_subscription,
             titulo="¡Nuevos Candidatos!",
             mensaje=mensaje_notif,
-            url_destino="vacantes.html"
+            url_destino="/vacantes.html"
         )
 
     return results

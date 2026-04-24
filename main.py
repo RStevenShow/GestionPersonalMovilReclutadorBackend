@@ -550,7 +550,11 @@ def enviar_notificacion_push(subscription_str: str, titulo: str, mensaje: str, u
         payload = json.dumps({
             "title": titulo,
             "body": mensaje,
-            "url": url_destino
+            "icon": "/assets/icon-192.png",
+            "badge": "/assets/icon-192.png",
+            "data": {
+                "url": url_destino  # El SW buscará esta clave específicamente
+            }
         })
 
         webpush(

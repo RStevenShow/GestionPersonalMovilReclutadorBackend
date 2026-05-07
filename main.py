@@ -110,10 +110,9 @@ def get_current_user(
     session: Session = Depends(get_session)
 ):
     """
-    Valida el JWT de Supabase Auth y sincroniza al usuario con PostgreSQL.
-    Resuelve el error 'alg value is not allowed' permitiendo HS256 explícitamente.
+    Valida el JWT de Supabase Auth con decodificación flexible para evitar 
+    el error de 'alg value is not allowed'.
     """
-
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Sesión expirada o inválida",
@@ -123,66 +122,60 @@ def get_current_user(
     try:
         token = credentials.credentials
 
-        # --- SOLUCIÓN AL PEGÓN DEL JWT ---
-        # Usamos una configuración que fuerza la validación de Supabase
+        # Usamos una decodificación que no valida el algoritmo inicialmente 
+        # para extraer la información, pero validamos la FIRMA con nuestro secreto.
         payload = jwt.decode(
             token,
             SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],  # Forzamos el algoritmo estándar de Supabase
+            algorithms=["HS256", "HS384", "HS512"], # Ampliamos la lista por si acaso
             options={
                 "verify_signature": True,
                 "verify_aud": True,
                 "verify_iat": True,
                 "verify_exp": True,
                 "verify_nbf": True,
-                "leeway": 10  # Margen de 10 segundos para desfases de reloj
             },
             audience="authenticated"
         )
 
         email: str = payload.get("email")
-        # Extraemos el nombre desde la metadata que envía tu auth.js
         user_metadata = payload.get("user_metadata", {})
         full_name: str = user_metadata.get("full_name", "Usuario MarkNica")
 
         if not email:
-            print("LOG: Token válido pero sin email en el payload")
             raise credentials_exception
 
     except JWTError as e:
-        # Esto saldrá en los logs de Render para que sepas qué falló exactamente
         print(f"ERROR VALIDACION JWT: {str(e)}")
+        # Si el error persiste, imprimimos el header para depurar en Render
+        try:
+            header = jwt.get_unverified_header(token)
+            print(f"DEBUG HEADER: {header}")
+        except:
+            pass
         raise credentials_exception
 
-    # --- SINCRONIZACIÓN CON POSTGRESQL ---
-    # Buscamos si el usuario ya existe en nuestra base de datos local
-    user = session.exec(
-        select(User).where(User.email == email)
-    ).first()
+    # --- Lógica de Sincronización (Mantenla igual) ---
+    user = session.exec(select(User).where(User.email == email)).first()
 
-    # Si el usuario es nuevo (se acaba de registrar en Supabase), lo creamos en PostgreSQL
     if not user:
-        print(f"SINCRO: Creando perfil local automático para {email}")
+        print(f"SINCRO: Creando cuenta local para {email}")
         try:
             user = User(
-                username=email, # Usamos email como username único
+                username=email,
                 email=email,
                 full_name=full_name,
-                hashed_password="auth_via_supabase", # Password dummy
+                hashed_password="auth_via_supabase",
                 role="reclutador",
                 created_at=datetime.utcnow()
             )
             session.add(user)
             session.commit()
             session.refresh(user)
-            print(f"SINCRO: Usuario {user.id} creado con éxito")
         except Exception as e:
             session.rollback()
-            print(f"ERROR SINCRO: {str(e)}")
-            raise HTTPException(
-                status_code=500, 
-                detail="Error al sincronizar cuenta local"
-            )
+            print(f"ERROR SINCRO: {e}")
+            raise HTTPException(status_code=500, detail="Error de sincronización")
 
     return user
 

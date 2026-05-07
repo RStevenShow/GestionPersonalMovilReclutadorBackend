@@ -123,43 +123,51 @@ def get_current_user(
     try:
         token = credentials.credentials
 
-        # 1. Decodificar JWT de Supabase usando tu secreto
+        # AJUSTE PARA RENDER: Forzamos HS256 y configuramos opciones explicitas
+        # Supabase usa HS256 para tokens de autenticacion.
         payload = jwt.decode(
-        token,
-        SUPABASE_JWT_SECRET,
-        algorithms=["HS256"], # Asegúrate de que esté en mayúsculas y sea una lista
-        options={"verify_aud": True}, # Forzamos verificación de audiencia
-        audience="authenticated"
+            token,
+            SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
+            options={
+                "verify_signature": True,
+                "verify_aud": True,
+                "verify_iat": True,
+                "verify_exp": True,
+                "verify_nbf": True,
+            },
+            audience="authenticated"
         )
 
-        # 2. Extraer informacion vital del payload
+        # Extraer informacion del payload decodificado
         email: str = payload.get("email")
         user_metadata = payload.get("user_metadata", {})
+        # Intentamos obtener el nombre de la metadata que envias desde el frontend
         full_name: str = user_metadata.get("full_name", "Usuario MarkNica")
 
         if email is None:
+            print("ERROR: El payload del JWT no contiene el campo email")
             raise credentials_exception
 
     except JWTError as e:
+        # Esto imprimira el error exacto en los logs de Render
         print(f"ERROR VALIDACION JWT: {str(e)}")
         raise credentials_exception
 
-    # 3. Buscar usuario en PostgreSQL local
+    # Buscar usuario en PostgreSQL local por email
     user = session.exec(
         select(User).where(User.email == email)
     ).first()
 
-    # 4. SINCRONIZACION AUTOMATICA: Si el usuario existe en Supabase 
-    # pero no en nuestra DB local, lo creamos ahora mismo.
+    # SINCRONIZACION AUTOMATICA: Crea el usuario local si Supabase lo autorizo
     if not user:
-        print(f"SINCRO: Creando perfil local para {email}")
+        print(f"SINCRO: Iniciando creacion de perfil local para {email}")
         try:
-            # Creamos el objeto usuario basado en tus modelos
             user = User(
-                username=email, # Usamos el email como username unico
+                username=email, # Usamos el email como identificador unico
                 email=email,
                 full_name=full_name,
-                # La contraseña no importa localmente porque autentica Supabase
+                # Marcamos que el usuario usa autenticacion externa
                 hashed_password="auth_via_supabase", 
                 role="reclutador",
                 created_at=datetime.utcnow()
@@ -167,13 +175,13 @@ def get_current_user(
             session.add(user)
             session.commit()
             session.refresh(user)
-            print(f"SINCRO: Usuario {user.id} guardado exitosamente")
+            print(f"SINCRO: Usuario {user.id} sincronizado exitosamente")
         except Exception as e:
             session.rollback()
-            print(f"ERROR EN SINCRONIZACION: {str(e)}")
+            print(f"ERROR CRITICO EN SINCRONIZACION: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Fallo al sincronizar usuario con base de datos local"
+                detail="Error interno al sincronizar cuenta"
             )
 
     return user

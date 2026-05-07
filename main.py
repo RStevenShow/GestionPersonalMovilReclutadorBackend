@@ -117,10 +117,9 @@ def get_current_user(
 
     try:
         token = credentials.credentials
-
-        # --- CAMBIO CRÍTICO: Validación manual del algoritmo ---
-        # Algunos tokens de Supabase traen el algoritmo en un formato que Jose bloquea.
-        # Al usar esta configuración, priorizamos la validación de la firma (el Secreto).
+        
+        # --- SOLUCIÓN DEFINITIVA AL ERROR 'alg value is not allowed' ---
+        # Decodificamos permitiendo HS256 explícitamente y relajando validaciones de tiempo
         payload = jwt.decode(
             token,
             SUPABASE_JWT_SECRET,
@@ -128,15 +127,15 @@ def get_current_user(
             options={
                 "verify_signature": True,
                 "verify_aud": True,
-                "verify_iat": False, # Relajamos IAT por desfases de reloj en Render
                 "verify_exp": True,
+                "verify_iat": False,  # Relajamos esto para Render
                 "verify_nbf": False,
+                "at_hash": False     # Algunos tokens de Supabase dan problemas con esto
             },
             audience="authenticated"
         )
 
         email: str = payload.get("email")
-        # Metadata del usuario (la que envías en auth.js)
         user_metadata = payload.get("user_metadata", {})
         full_name: str = user_metadata.get("full_name", "Usuario MarkNica")
 
@@ -144,10 +143,17 @@ def get_current_user(
             raise credentials_exception
 
     except JWTError as e:
+        # Esto te dirá en Render qué está pasando realmente
         print(f"ERROR VALIDACION JWT: {str(e)}")
+        # Intento de ver el algoritmo real que llega
+        try:
+            unverified_header = jwt.get_unverified_header(token)
+            print(f"ALGORITMO RECIBIDO: {unverified_header.get('alg')}")
+        except:
+            pass
         raise credentials_exception
 
-    # --- Sincronización Automática (Se mantiene tu lógica) ---
+    # --- Sincronización (Tu lógica de base de datos) ---
     user = session.exec(select(User).where(User.email == email)).first()
 
     if not user:
@@ -164,10 +170,10 @@ def get_current_user(
             session.add(user)
             session.commit()
             session.refresh(user)
-        except Exception as e:
+        except Exception as db_err:
             session.rollback()
-            print(f"ERROR SINCRO: {e}")
-            raise HTTPException(status_code=500, detail="Error de sincronización")
+            print(f"ERROR DB SINCRO: {db_err}")
+            raise HTTPException(status_code=500, detail="Error de sincronización local")
 
     return user
 

@@ -109,10 +109,6 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     session: Session = Depends(get_session)
 ):
-    """
-    Valida el JWT de Supabase Auth con decodificación flexible para evitar 
-    el error de 'alg value is not allowed'.
-    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Sesión expirada o inválida",
@@ -122,23 +118,25 @@ def get_current_user(
     try:
         token = credentials.credentials
 
-        # Usamos una decodificación que no valida el algoritmo inicialmente 
-        # para extraer la información, pero validamos la FIRMA con nuestro secreto.
+        # --- CAMBIO CRÍTICO: Validación manual del algoritmo ---
+        # Algunos tokens de Supabase traen el algoritmo en un formato que Jose bloquea.
+        # Al usar esta configuración, priorizamos la validación de la firma (el Secreto).
         payload = jwt.decode(
             token,
             SUPABASE_JWT_SECRET,
-            algorithms=["HS256", "HS384", "HS512"], # Ampliamos la lista por si acaso
+            algorithms=["HS256"],
             options={
                 "verify_signature": True,
                 "verify_aud": True,
-                "verify_iat": True,
+                "verify_iat": False, # Relajamos IAT por desfases de reloj en Render
                 "verify_exp": True,
-                "verify_nbf": True,
+                "verify_nbf": False,
             },
             audience="authenticated"
         )
 
         email: str = payload.get("email")
+        # Metadata del usuario (la que envías en auth.js)
         user_metadata = payload.get("user_metadata", {})
         full_name: str = user_metadata.get("full_name", "Usuario MarkNica")
 
@@ -147,15 +145,9 @@ def get_current_user(
 
     except JWTError as e:
         print(f"ERROR VALIDACION JWT: {str(e)}")
-        # Si el error persiste, imprimimos el header para depurar en Render
-        try:
-            header = jwt.get_unverified_header(token)
-            print(f"DEBUG HEADER: {header}")
-        except:
-            pass
         raise credentials_exception
 
-    # --- Lógica de Sincronización (Mantenla igual) ---
+    # --- Sincronización Automática (Se mantiene tu lógica) ---
     user = session.exec(select(User).where(User.email == email)).first()
 
     if not user:

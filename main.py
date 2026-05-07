@@ -95,6 +95,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+
 @app.on_event("startup")
 def on_startup():
     """Ejecutado al iniciar el servidor: Sincroniza tablas y carga modelos de IA."""
@@ -229,13 +231,37 @@ def delete_user_me(session: Session = Depends(get_session), current_user: User =
 
 @app.post("/offers/", response_model=JobOfferRead)
 def create_offer(offer: JobOfferCreate, session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
-    """API: Crea una nueva vacante, traduce la descripción y genera su vector IA."""
+    """API: Crea una vacante usando TODO el contexto para un matching perfecto."""
     offer_data = offer.dict()
     offer_data.pop("owner_id", None) 
-    full_context = f"Puesto: {offer.title}. Descripcion: {offer.description_original}."
+    
+    # 1. Creamos el "Súper Contexto" combinando todas las variables clave.
+    # Esta estructura ayuda a los modelos de lenguaje (como los de Hugging Face) 
+    # a entender la jerarquía de la información.
+    full_context = (
+        f"JOB TITLE: {offer.title}. "
+        f"LOCATION: {offer.location}. "
+        f"REQUIRED EXPERIENCE: {offer.experience_years} years. "
+        f"CORE SKILLS: {offer.skills_clave}. "
+        f"JOB DESCRIPTION: {offer.description_original}. "
+        f"SALARY RANGE: {offer.salary_range}."
+    )
+    
+    # 2. Traducimos este bloque completo para que el modelo de embedding 
+    # (que suele ser mejor en inglés) trabaje con máxima precisión.
     desc_en = translate_text(full_context)
+    
+    # 3. Generamos el vector que ahora contiene ADN de: Título + Skills + Ubicación + Descrip.
     vector = get_embedding(desc_en)
-    new_offer = JobOffer(**offer_data, description_en=desc_en, vector=vector, owner_id=current_user.id)
+    
+    # 4. Guardamos en la base de datos
+    new_offer = JobOffer(
+        **offer_data, 
+        description_en=desc_en, 
+        vector=vector, 
+        owner_id=current_user.id
+    )
+    
     session.add(new_offer)
     session.commit()
     session.refresh(new_offer)

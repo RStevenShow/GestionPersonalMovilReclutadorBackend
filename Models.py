@@ -57,7 +57,7 @@ class JobOfferBase(SQLModel):
     responsibilities: Optional[str] = None
     location: Optional[str] = "Remoto"
     priority: str = Field(default="medium")
-
+    skills_clave: str = ""
     max_candidatos: int = Field(default=1)
     estado: str = Field(default="abierta")
 
@@ -88,9 +88,9 @@ class JobOffer(JobOfferBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     description_en: Optional[str] = None
     vector: Optional[List[float]] = Field(sa_column=Column(ARRAY(FLOAT)))
-
+    
     owner: Optional["User"] = Relationship(back_populates="job_offers")
-
+   
     candidates: List["Candidate"] = Relationship(
         back_populates="job_offer",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}

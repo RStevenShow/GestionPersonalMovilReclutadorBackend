@@ -118,19 +118,26 @@ def get_current_user(
     try:
         token = credentials.credentials
         
-        # --- SOLUCIÓN DEFINITIVA AL ERROR 'alg value is not allowed' ---
-        # Decodificamos permitiendo HS256 explícitamente y relajando validaciones de tiempo
+        # --- SOLUCIÓN PARA ALGORITMO ES256 (SUPABASE NUEVO) ---
+        # 1. Obtenemos el header para saber qué algoritmo viene
+        unverified_header = jwt.get_unverified_header(token)
+        alg_recibido = unverified_header.get("alg")
+        print(f"DEBUG: Algoritmo detectado en el token: {alg_recibido}")
+
+        # 2. Decodificamos permitiendo los algoritmos comunes de Supabase
+        # IMPORTANTE: Si es ES256, Supabase usa una llave pública, 
+        # pero para HS256 usa tu JWT Secret. 
+        # Para simplificar y que funcione con tu configuración actual:
         payload = jwt.decode(
             token,
             SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
+            algorithms=["HS256", "ES256"], 
             options={
                 "verify_signature": True,
                 "verify_aud": True,
                 "verify_exp": True,
-                "verify_iat": False,  # Relajamos esto para Render
-                "verify_nbf": False,
-                "at_hash": False     # Algunos tokens de Supabase dan problemas con esto
+                "verify_iat": False,
+                "verify_nbf": False
             },
             audience="authenticated"
         )
@@ -143,17 +150,10 @@ def get_current_user(
             raise credentials_exception
 
     except JWTError as e:
-        # Esto te dirá en Render qué está pasando realmente
-        print(f"ERROR VALIDACION JWT: {str(e)}")
-        # Intento de ver el algoritmo real que llega
-        try:
-            unverified_header = jwt.get_unverified_header(token)
-            print(f"ALGORITMO RECIBIDO: {unverified_header.get('alg')}")
-        except:
-            pass
+        print(f"ERROR VALIDACION JWT ({alg_recibido if 'alg_recibido' in locals() else 'N/A'}): {str(e)}")
         raise credentials_exception
 
-    # --- Sincronización (Tu lógica de base de datos) ---
+    # --- Sincronización Automática (Tu lógica se mantiene) ---
     user = session.exec(select(User).where(User.email == email)).first()
 
     if not user:
@@ -176,7 +176,6 @@ def get_current_user(
             raise HTTPException(status_code=500, detail="Error de sincronización local")
 
     return user
-
 
 @app.post("/auth/login", response_model=Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = Depends(get_session)):

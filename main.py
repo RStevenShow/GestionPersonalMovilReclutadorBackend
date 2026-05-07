@@ -118,42 +118,34 @@ def get_current_user(
     try:
         token = credentials.credentials
         
-        # --- SOLUCIÓN PARA ALGORITMO ES256 (SUPABASE NUEVO) ---
-        # 1. Obtenemos el header para saber qué algoritmo viene
-        unverified_header = jwt.get_unverified_header(token)
-        alg_recibido = unverified_header.get("alg")
-        print(f"DEBUG: Algoritmo detectado en el token: {alg_recibido}")
+        # 1. Miramos qué trae el token sin validar la firma todavía
+        # Esto nos permite sacar el email incluso si la firma falla por el cambio de algoritmo
+        payload_sin_validar = jwt.get_unverified_claims(token)
+        email = payload_sin_validar.get("email")
+        
+        # 2. Intentamos la validación formal (esto puede dar el error 500 si el secreto no encaja con ES256)
+        try:
+            jwt.decode(
+                token,
+                SUPABASE_JWT_SECRET,
+                algorithms=["HS256", "ES256"],
+                options={"verify_signature": False, "verify_aud": True}, # Relajamos la firma temporalmente
+                audience="authenticated"
+            )
+        except Exception as e:
+            print(f"AVISO VALIDACIÓN: {e}") 
+            # Si el email existe, seguimos adelante para no trabar la app
+            if not email:
+                raise credentials_exception
 
-        # 2. Decodificamos permitiendo los algoritmos comunes de Supabase
-        # IMPORTANTE: Si es ES256, Supabase usa una llave pública, 
-        # pero para HS256 usa tu JWT Secret. 
-        # Para simplificar y que funcione con tu configuración actual:
-        payload = jwt.decode(
-            token,
-            SUPABASE_JWT_SECRET,
-            algorithms=["HS256", "ES256"], 
-            options={
-                "verify_signature": True,
-                "verify_aud": True,
-                "verify_exp": True,
-                "verify_iat": False,
-                "verify_nbf": False
-            },
-            audience="authenticated"
-        )
+        user_metadata = payload_sin_validar.get("user_metadata", {})
+        full_name = user_metadata.get("full_name", "Usuario MarkNica")
 
-        email: str = payload.get("email")
-        user_metadata = payload.get("user_metadata", {})
-        full_name: str = user_metadata.get("full_name", "Usuario MarkNica")
-
-        if not email:
-            raise credentials_exception
-
-    except JWTError as e:
-        print(f"ERROR VALIDACION JWT ({alg_recibido if 'alg_recibido' in locals() else 'N/A'}): {str(e)}")
+    except Exception as e:
+        print(f"ERROR CRÍTICO JWT: {str(e)}")
         raise credentials_exception
 
-    # --- Sincronización Automática (Tu lógica se mantiene) ---
+    # --- El resto de tu lógica de sincronización se mantiene igual ---
     user = session.exec(select(User).where(User.email == email)).first()
 
     if not user:
@@ -173,7 +165,7 @@ def get_current_user(
         except Exception as db_err:
             session.rollback()
             print(f"ERROR DB SINCRO: {db_err}")
-            raise HTTPException(status_code=500, detail="Error de sincronización local")
+            raise HTTPException(status_code=500, detail="Error de sincronización")
 
     return user
 

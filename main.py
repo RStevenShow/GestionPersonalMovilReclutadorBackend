@@ -125,10 +125,11 @@ def get_current_user(
 
         # 1. Decodificar JWT de Supabase usando tu secreto
         payload = jwt.decode(
-            token,
-            SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            audience="authenticated"
+        token,
+        SUPABASE_JWT_SECRET,
+        algorithms=["HS256"], # Asegúrate de que esté en mayúsculas y sea una lista
+        options={"verify_aud": True}, # Forzamos verificación de audiencia
+        audience="authenticated"
         )
 
         # 2. Extraer informacion vital del payload

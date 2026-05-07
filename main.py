@@ -1,20 +1,19 @@
 import os
 import time
+import json
 from typing import List
+from datetime import datetime, timedelta, timezone
+
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlmodel import Session, select, create_engine
-from sqlalchemy import func
 from jose import JWTError, jwt
 from supabase import create_client, Client
-import json
-from pywebpush import webpush, WebPushException
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from apscheduler.schedulers.background import BackgroundScheduler
+from pytz import timezone as pytz_timezone
 
-# --- IMPORTS DE MODELOS Y UTILIDADES ---
+# --- IMPORTS PROPIOS ---
 from database import create_db_and_tables, get_session
 from Models import (
     JobOffer, JobOfferCreate, JobOfferRead, 
@@ -22,10 +21,7 @@ from Models import (
     User, UserCreate, UserRead, Token,
     Interview, InterviewCreate, InterviewRead
 )
-from auth_utils import (
-    get_password_hash, verify_password, create_access_token, 
-    SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
-)
+from auth_utils import get_password_hash, verify_password
 
 from ai_service import (
     load_models, translate_text, get_embedding,
@@ -34,36 +30,11 @@ from ai_service import (
     extract_phone_from_text
 )
 
-from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime, timedelta
-from pytz import timezone
-    
-
-from ai_service import (
-    load_models, translate_text, get_embedding,
-    extract_text_from_pdf, calculate_similarity,
-    generate_rationale, extract_email_from_text,
-    extract_phone_from_text
-)
-
-from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime, timedelta
-from pytz import timezone
-from sqlmodel import select, Session
-
-# Configuración de zona horaria para Nicaragua
-nicaragua_tz = timezone('America/Managua')
-
-# --- CONFIGURACIÓN DE BASE DE DATOS ---
-# Importante: DATABASE_URL es diferente a SUPABASE_URL
+# --- CONFIGURACIÓN ---
+nicaragua_tz = pytz_timezone('America/Managua')
 DATABASE_URL = os.environ.get("DATABASE_URL") 
-
-# Crear el engine de forma global para que el Scheduler lo vea
 engine = create_engine(DATABASE_URL)
 
-
-# --- CONFIGURACIÓN DE SUPABASE STORAGE ---
-# Estas variables deben estar configuradas en el Dashboard de Render
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET")
@@ -74,19 +45,7 @@ if SUPABASE_URL and SUPABASE_KEY:
 
 app = FastAPI(title="MarkNica Recruiting AI API")
 security = HTTPBearer()
-# --- CONFIGURACIÓN DE variables para notificacion ---
-VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY")
-VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY")
-VAPID_EMAIL = os.environ.get("VAPID_EMAIL", "mailto:marknicaappmovilreclutador@gmail.com")
 
-# Esta variable es necesaria para la funcion de envio
-VAPID_CLAIMS = {
-    "sub": VAPID_EMAIL
-}
-# Vlogs
-if not VAPID_PRIVATE_KEY or not VAPID_PUBLIC_KEY:
-    print("WARNING: Las llaves VAPID no estan configuradas. Las notificaciones fallaran.")
-# --- CONFIGURACIÓN DE CORS ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -95,97 +54,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- EVENTOS DE SISTEMA ---
 @app.on_event("startup")
 def on_startup():
-    """Ejecutado al iniciar el servidor: Sincroniza tablas y carga modelos de IA."""
     create_db_and_tables() 
     load_models()
+    if not scheduler.running:
+        scheduler.start()
+        print("SISTEMA: Planificador iniciado")
 
-# --- UTILIDADES DE SEGURIDAD ---
-# =====================================================
-#   AUTENTICACIÓN HÍBRIDA (SUPABASE + FASTAPI)
-# =====================================================
+@app.on_event("shutdown")
+def on_shutdown():
+    if scheduler.running:
+        scheduler.shutdown()
+
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     session: Session = Depends(get_session)
 ):
-    """
-    Valida el JWT enviado desde Supabase Auth y sincroniza al usuario 
-    con la base de datos local de PostgreSQL si no existe.
-    """
 
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Sesion expirada o invalida",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    token = credentials.credentials
 
     try:
-        token = credentials.credentials
+        # VALIDAR TOKEN CON SUPABASE
+        user = supabase.auth.get_user(token)
 
-        # AJUSTE PARA RENDER: Forzamos HS256 y configuramos opciones explicitas
-        # Supabase usa HS256 para tokens de autenticacion.
-        payload = jwt.decode(
-            token,
-            SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            options={
-                "verify_signature": True,
-                "verify_aud": True,
-                "verify_iat": True,
-                "verify_exp": True,
-                "verify_nbf": True,
-            },
-            audience="authenticated"
-        )
+        if not user or not user.user:
+            raise HTTPException(status_code=401, detail="Token inválido")
 
-        # Extraer informacion del payload decodificado
-        email: str = payload.get("email")
-        user_metadata = payload.get("user_metadata", {})
-        # Intentamos obtener el nombre de la metadata que envias desde el frontend
-        full_name: str = user_metadata.get("full_name", "Usuario MarkNica")
+        user_id = user.user.id
 
-        if email is None:
-            print("ERROR: El payload del JWT no contiene el campo email")
-            raise credentials_exception
+    except Exception as e:
+        print("ERROR VALIDACION JWT:", e)
+        raise HTTPException(status_code=401, detail="Token inválido")
 
-    except JWTError as e:
-        # Esto imprimira el error exacto en los logs de Render
-        print(f"ERROR VALIDACION JWT: {str(e)}")
-        raise credentials_exception
-
-    # Buscar usuario en PostgreSQL local por email
-    user = session.exec(
-        select(User).where(User.email == email)
+    db_user = session.exec(
+        select(User).where(User.id == user_id)
     ).first()
 
-    # SINCRONIZACION AUTOMATICA: Crea el usuario local si Supabase lo autorizo
-    if not user:
-        print(f"SINCRO: Iniciando creacion de perfil local para {email}")
-        try:
-            user = User(
-                username=email, # Usamos el email como identificador unico
-                email=email,
-                full_name=full_name,
-                # Marcamos que el usuario usa autenticacion externa
-                hashed_password="auth_via_supabase", 
-                role="reclutador",
-                created_at=datetime.utcnow()
-            )
-            session.add(user)
-            session.commit()
-            session.refresh(user)
-            print(f"SINCRO: Usuario {user.id} sincronizado exitosamente")
-        except Exception as e:
-            session.rollback()
-            print(f"ERROR CRITICO EN SINCRONIZACION: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error interno al sincronizar cuenta"
-            )
+    if not db_user:
+        raise HTTPException(status_code=401, detail="Usuario no encontrado")
 
-    return user
-
+    return db_user
 
 
 @app.post("/auth/login", response_model=Token)

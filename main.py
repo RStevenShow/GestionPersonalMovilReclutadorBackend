@@ -72,7 +72,7 @@ supabase: Client = None
 if SUPABASE_URL and SUPABASE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app = FastAPI(title="MarkNica Recruiting AI API")
+app = FastAPI(title="MarkNic Recruiting AI API")
 security = HTTPBearer()
 # --- CONFIGURACIÓN DE variables para notificacion ---
 VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY")
@@ -141,7 +141,7 @@ def get_current_user(
                 raise credentials_exception
 
         user_metadata = payload_sin_validar.get("user_metadata", {})
-        full_name = user_metadata.get("full_name", "Usuario MarkNica")
+        full_name = user_metadata.get("full_name", "Usuario MarkNic")
 
     except Exception as e:
         print(f"ERROR CRÍTICO JWT: {str(e)}")
@@ -501,7 +501,7 @@ def get_dashboard_stats(session: Session = Depends(get_session), current_user: U
     )
 
     return {
-        "appNombre": "MarkNica AI",
+        "appNombre": "MarkNic Recruiting AI",
         "candidatos": num_cand,
         "match": round(promedio_general, 1),
 
